@@ -1,0 +1,42 @@
+#!/bin/bash
+
+# define SRC_ and DST_ prefixed variables:
+# - USERNAME
+# - PASSWORD
+# - REPOSITORY
+
+SRC_TOKEN=$(curl -s -H "Content-Type: application/json" -X POST -d '{"username": "'${SRC_USERNAME}'", "password": "'${SRC_PASSWORD}'"}' https://hub.docker.com/v2/users/login/ | jq -r .token)
+SRC_REPOSITORY_LIST=$(curl -s -H "Authorization: JWT ${SRC_TOKEN}" https://hub.docker.com/v2/repositories/${SRC_REPOSITORY}/?page_size=104 | jq -r '.results|.[]|.name')
+SRC_AUTH=`echo -n "${SRC_USERNAME}:${SRC_PASSWORD}"|base64`
+DST_AUTH=`echo -n "${DST_USERNAME}:${DST_PASSWORD}"|base64`
+
+images=()
+
+for repository in ${SRC_REPOSITORY_LIST}
+do
+	echo $repository
+	image_tags=$(curl -s -H "Authorization: JWT ${SRC_TOKEN}" https://hub.docker.com/v2/repositories/${SRC_REPOSITORY}/${repository}/tags/?page_size=100 | jq -r '.results|.[]|.name')
+	echo $image_tags
+
+	for tag in ${image_tags}
+	do
+		images+=("${repository}:${tag}")
+	done
+done
+
+mkdir -p ~/.docker/
+for image in ${images[@]}; do
+	echo "Cloning ${image}"
+	do
+		docker pull "${SRC_REPOSITORY}/${image}";
+		if [ $? -eq 0 ]; then
+			break;
+		fi
+	done
+	echo "{\"auths\": { \"https://index.docker.io/v1/\": { \"auth\": \"${SRC_AUTH}\" } } }" > ~/.docker/config.json
+	docker pull "${SRC_REPOSITORY}/${image}"
+	echo "{\"auths\": { \"https://index.docker.io/v1/\": { \"auth\": \"${DST_AUTH}\" } } }" > ~/.docker/config.json
+	docker image tag "${SRC_REPOSITORY}/${image}" "${DST_REPOSITORY}/${image}"
+	docker push "${DST_REPOSITORY}/${image}"
+	docker rmi "${SRC_REPOSITORY}/${image}"
+done
